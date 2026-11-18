@@ -1,0 +1,63 @@
+
+name: Build Windows VST3
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Find plugin project
+        shell: pwsh
+        run: |
+          if (Test-Path "CMakeLists.txt") {
+            "PROJECT_DIR=." >> $env:GITHUB_ENV
+          }
+          elseif (Test-Path "OptoValve/CMakeLists.txt") {
+            "PROJECT_DIR=OptoValve" >> $env:GITHUB_ENV
+          }
+          else {
+            throw "Cannot find CMakeLists.txt"
+          }
+
+      - name: Configure VST3
+        shell: pwsh
+        run: |
+          cmake -S "$env:PROJECT_DIR" -B build `
+            -G "Visual Studio 17 2022" -A x64
+
+      - name: Compile Release
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Package VST3
+        shell: pwsh
+        run: |
+          $plugins = Get-ChildItem -Path build `
+            -Filter "*.vst3" -Recurse |
+            Where-Object { $_.PSIsContainer }
+
+          if (-not $plugins) {
+            throw "No compiled VST3 found"
+          }
+
+          New-Item -ItemType Directory -Force `
+            -Path dist | Out-Null
+
+          foreach ($plugin in $plugins) {
+            Copy-Item $plugin.FullName `
+              -Destination dist -Recurse -Force
+          }
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: OptoValve-Windows-x64-VST3
+          path: dist/
+          if-no-files-found: error
