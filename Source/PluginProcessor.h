@@ -12,7 +12,7 @@ public:
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
-    const juce::String getName() const override { return "OptoValve 1.4"; }
+    const juce::String getName() const override { return "OptoValve 1.5"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -40,6 +40,8 @@ private:
     std::array<float,2> detectorBass {0,0};
     float bassEnvelope=0.0f, presenceEnvelope=0.0f;
     float envelopeDb=0.0f, slowMemory=0.0f, smoothedGR=0.0f;
+    float t4FastCell=0.0f, t4SlowCell=0.0f, t4Exposure=0.0f;
+    float t4GainReduction=0.0f, responseBlend=0.0f;
     std::unique_ptr<juce::dsp::Oversampling<float>> colourOversampling;
     juce::AudioBuffer<float> colourBuffer, dryBuffer;
     std::array<std::vector<float>, 2> dryDelay;

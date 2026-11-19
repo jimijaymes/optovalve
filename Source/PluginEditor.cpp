@@ -71,6 +71,17 @@ OptoValveEditor::OptoValveEditor(OptoValveProcessor& p) : AudioProcessorEditor(p
     releaseLabel.setJustificationType(juce::Justification::centred);
     releaseLabel.setColour(juce::Label::textColourId,cream);
     addAndMakeVisible(releaseLabel);
+    responseMode.addItem("ENHANCED",1);
+    responseMode.addItem("CLASSIC T4",2);
+    responseMode.setColour(juce::ComboBox::backgroundColourId,ink);
+    responseMode.setColour(juce::ComboBox::textColourId,cream);
+    responseMode.setColour(juce::ComboBox::outlineColourId,gold);
+    addAndMakeVisible(responseMode);
+    responseAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(p.parameters,"response",responseMode);
+    responseLabel.setText("OPTICAL RESPONSE",juce::dontSendNotification);
+    responseLabel.setJustificationType(juce::Justification::centred);
+    responseLabel.setColour(juce::Label::textColourId,cream);
+    addAndMakeVisible(responseLabel);
     lofiSwitch.setButtonText("VINTAGE BANDWIDTH");
     lofiSwitch.setColour(juce::ToggleButton::textColourId,cream);
     lofiSwitch.setColour(juce::ToggleButton::tickColourId,gold);
@@ -89,7 +100,7 @@ void OptoValveEditor::paint(juce::Graphics& g)
     g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(11.0f),12.0f,2.0f);
     g.setColour(cream);
     g.setFont(juce::Font(juce::FontOptions(33.0f,juce::Font::bold)));
-    g.drawText("OPTO  VALVE  1.4",35,22,500,48,juce::Justification::centredLeft);
+    g.drawText("OPTO  VALVE  1.5",35,22,500,48,juce::Justification::centredLeft);
     g.setFont(juce::Font(juce::FontOptions(12.0f)));
     g.drawText("PROGRAM DEPENDENT OPTICAL TUBE COMPRESSOR",38,68,460,22,juce::Justification::centredLeft);
     g.setColour(gold);
@@ -144,7 +155,9 @@ void OptoValveEditor::resized()
     mode.setBounds(798,218,185,30);
     releaseLabel.setBounds(784,266,210,22);
     releaseStyle.setBounds(798,292,185,30);
-    lofiSwitch.setBounds(794,353,205,32);
+    responseLabel.setBounds(784,339,210,22);
+    responseMode.setBounds(798,365,185,30);
+    lofiSwitch.setBounds(794,416,205,32);
 }
 
 void OptoValveEditor::timerCallback()

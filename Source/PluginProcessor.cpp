@@ -23,6 +23,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
     p.add(std::make_unique<APF>(juce::ParameterID{"tube",1}, "Tube Drive", juce::NormalisableRange<float>(0,100,0.1f), 25));
     p.add(std::make_unique<APF>(juce::ParameterID{"transformer",1}, "Transformer Drive", juce::NormalisableRange<float>(0,100,0.1f), 20));
     p.add(std::make_unique<APC>(juce::ParameterID{"releaseStyle",1}, "Release Style", juce::StringArray{"LA-2A Slow", "LA-3A Fast"}, 0));
+    p.add(std::make_unique<APC>(juce::ParameterID{"response",1}, "Optical Response", juce::StringArray{"Enhanced", "Classic T4"}, 0));
     p.add(std::make_unique<APB>(juce::ParameterID{"lofi",1}, "Vintage Bandwidth", false));
     p.add(std::make_unique<APF>(juce::ParameterID{"mix",1}, "Wet Mix (%)", juce::NormalisableRange<float>(0,100,0.1f), 100));
     return p;
@@ -30,7 +31,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
 OptoValveProcessor::OptoValveProcessor() : AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)), parameters(*this,nullptr,"STATE",makeLayout()) {}
 void OptoValveProcessor::prepareToPlay(double sr, int maximumExpectedSamplesPerBlock)
 {
-    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; gainReductionDb.store(0);
+    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; t4FastCell=t4SlowCell=t4Exposure=t4GainReduction=responseBlend=0.0f; gainReductionDb.store(0);
     preparedBlockSize = juce::jmax(1, maximumExpectedSamplesPerBlock);
     colourBuffer.setSize(2, preparedBlockSize);
     dryBuffer.setSize(2, preparedBlockSize);
@@ -63,6 +64,14 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const float vintagePole=std::exp(-2.0f*juce::MathConstants<float>::pi*12000.0f/(float)sampleRateHz);
     const float switchPole=coeff(0.015f,sampleRateHz);
     const bool fastMode=*parameters.getRawParameterValue("releaseStyle")>0.5f;
+    const float responseTarget=*parameters.getRawParameterValue("response")>0.5f?1.0f:0.0f;
+    const float responseSwitch=coeff(0.025f,sampleRateHz);
+    // Published T4 response: about 10 ms attack; first half of recovery
+    // around 40-80 ms, remainder potentially seconds and dependent on exposure.
+    const float t4Attack=coeff(0.010f,sampleRateHz);
+    const float t4FastDecay=coeff(0.028f,sampleRateHz);
+    const float t4ExposureAttack=coeff(0.70f,sampleRateHz);
+    const float t4ExposureRelease=coeff(2.0f,sampleRateHz);
     const float hpA=1.0f/(1.0f+2.0f*juce::MathConstants<float>::pi*cutoff/(float)sampleRateHz);
     // Optical response: presence transients engage faster, bass energy builds more
     // gradually. Both feed ONE gain cell, as on an LA-2A (not a multiband compressor).
@@ -90,7 +99,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     if(dryBuffer.getNumSamples()<n) dryBuffer.setSize(2,n,false,false,true);
     for(int i=0;i<n;++i)
     {
-        float bassLevel=0.0f, presenceLevel=0.0f;
+        float bassLevel=0.0f, presenceLevel=0.0f, classicLevel=0.0f;
         for(int c=0;c<channels;++c) {
             const float original=buffer.getReadPointer(c)[i]*inputGain;
             auto& bass=transformerBass[(size_t)c];
@@ -110,6 +119,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
             const float transformed=xfmr>0.0001f ? magnetic-hfDamping*(magnetic-treble) : original;
             buffer.getWritePointer(c)[i]=transformed;
             const float detected=detector[(size_t)c].process(transformed,hpA);
+            classicLevel=juce::jmax(classicLevel,std::abs(detected));
             auto& low=detectorBass[(size_t)c];
             low=bassSplit*low+(1.0f-bassSplit)*detected;
             bassLevel=juce::jmax(bassLevel,std::abs(low));
@@ -137,7 +147,34 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         const float envCoef=target>envelopeDb?presenceAttack:release;
         envelopeDb=envCoef*envelopeDb+(1.0f-envCoef)*target;
         smoothedGR=grSmooth*smoothedGR+(1.0f-grSmooth)*envelopeDb;
-        const float gain=dbToGain(-smoothedGR);
+        // Classic T4 uses the same optical gain cell but its own broadband
+        // detector and two-component photocell recovery with illumination memory.
+        const float classicDb=juce::Decibels::gainToDecibels(juce::jmax(classicLevel,1.0e-8f),-160.0f);
+        const float classicAbove=classicDb-threshold;
+        float classicTarget=0.0f;
+        if(knee<0.01f) classicTarget=juce::jmax(0.0f,classicAbove)*slope;
+        else if(classicAbove>=knee*0.5f) classicTarget=classicAbove*slope;
+        else if(classicAbove>-knee*0.5f) {
+            const float t=classicAbove+knee*0.5f;
+            classicTarget=slope*t*t/(2.0f*knee);
+        }
+        // Exposure integrates sustained and strong illumination, causing a
+        // larger, longer-lasting slow tail after prolonged gain reduction.
+        const float illumination=juce::jlimit(0.0f,1.0f,classicTarget/18.0f);
+        const float exposureCoef=illumination>t4Exposure?t4ExposureAttack:t4ExposureRelease;
+        t4Exposure=exposureCoef*t4Exposure+(1.0f-exposureCoef)*illumination;
+        const float t4SlowTime=1.0f+11.0f*t4Exposure;
+        const float t4SlowDecay=coeff(t4SlowTime,sampleRateHz);
+        t4FastCell=(classicTarget>t4FastCell?t4Attack:t4FastDecay)*t4FastCell
+                   +(1.0f-(classicTarget>t4FastCell?t4Attack:t4FastDecay))*classicTarget;
+        t4SlowCell=(classicTarget>t4SlowCell?t4Attack:t4SlowDecay)*t4SlowCell
+                   +(1.0f-(classicTarget>t4SlowCell?t4Attack:t4SlowDecay))*classicTarget;
+        const float slowFraction=0.10f+0.42f*t4Exposure;
+        const float classicGR=(1.0f-slowFraction)*t4FastCell+slowFraction*t4SlowCell;
+        // Smooth response-mode changes in the gain domain to prevent clicks.
+        responseBlend=responseSwitch*responseBlend+(1.0f-responseSwitch)*responseTarget;
+        t4GainReduction=classicGR;
+        const float gain=dbToGain(-(smoothedGR+(t4GainReduction-smoothedGR)*responseBlend));
         for(int c=0;c<channels;++c)
         {
             const float original=buffer.getReadPointer(c)[i];
@@ -202,7 +239,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
             }
         }
     }
-    gainReductionDb.store(juce::jmax(0.0f,smoothedGR),std::memory_order_relaxed);
+    gainReductionDb.store(juce::jmax(0.0f,smoothedGR+(t4GainReduction-smoothedGR)*responseBlend),std::memory_order_relaxed);
 }
 juce::AudioProcessorEditor* OptoValveProcessor::createEditor() { return new OptoValveEditor(*this); }
 void OptoValveProcessor::getStateInformation(juce::MemoryBlock& b) { auto xml=parameters.copyState().createXml(); copyXmlToBinary(*xml,b); }
