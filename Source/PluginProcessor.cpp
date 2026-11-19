@@ -30,7 +30,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
 OptoValveProcessor::OptoValveProcessor() : AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)), parameters(*this,nullptr,"STATE",makeLayout()) {}
 void OptoValveProcessor::prepareToPlay(double sr, int maximumExpectedSamplesPerBlock)
 {
-    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; envelopeDb=slowMemory=smoothedGR=0; gainReductionDb.store(0);
+    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; gainReductionDb.store(0);
     preparedBlockSize = juce::jmax(1, maximumExpectedSamplesPerBlock);
     colourBuffer.setSize(2, preparedBlockSize);
     dryBuffer.setSize(2, preparedBlockSize);
@@ -64,13 +64,17 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const float switchPole=coeff(0.015f,sampleRateHz);
     const bool fastMode=*parameters.getRawParameterValue("releaseStyle")>0.5f;
     const float hpA=1.0f/(1.0f+2.0f*juce::MathConstants<float>::pi*cutoff/(float)sampleRateHz);
-    // LA-2A nominal attack is approximately 10 ms; measured response is program-dependent.
-    const float attack=coeff(0.010f,sampleRateHz);
-    const float fastRelease=coeff(fastMode ? 0.045f : 0.075f,sampleRateHz);
-    const float slowRelease=coeff(fastMode ? 0.35f : 1.6f,sampleRateHz);
-    const float memoryRelease=coeff(fastMode ? 0.65f : 2.8f,sampleRateHz);
-    // Keep the secondary smoothing short so it does not noticeably slow the 10 ms attack.
-    const float grSmooth=coeff(0.0005f,sampleRateHz);
+    // Optical response: presence transients engage faster, bass energy builds more
+    // gradually. Both feed ONE gain cell, as on an LA-2A (not a multiband compressor).
+    const float bassSplit=std::exp(-2.0f*juce::MathConstants<float>::pi*320.0f/(float)sampleRateHz);
+    const float bassAttack=coeff(0.035f,sampleRateHz);
+    const float presenceAttack=coeff(0.010f,sampleRateHz);
+    const float bassRelease=coeff(fastMode ? 0.22f : 0.55f,sampleRateHz);
+    const float presenceRelease=coeff(fastMode ? 0.08f : 0.16f,sampleRateHz);
+    const float fastRelease=coeff(fastMode ? 0.09f : 0.16f,sampleRateHz);
+    const float slowRelease=coeff(fastMode ? 0.55f : 1.45f,sampleRateHz);
+    const float memoryRelease=coeff(fastMode ? 0.85f : 2.5f,sampleRateHz);
+    const float grSmooth=coeff(0.003f,sampleRateHz);
     const float slope=1.0f-1.0f/ratio;
     // Reduction maps to an approximate optical detector threshold; no fixed 1:1 hardware calibration.
     const float threshold=-reduction;
@@ -86,7 +90,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     if(dryBuffer.getNumSamples()<n) dryBuffer.setSize(2,n,false,false,true);
     for(int i=0;i<n;++i)
     {
-        float level=0;
+        float bassLevel=0.0f, presenceLevel=0.0f;
         for(int c=0;c<channels;++c) {
             const float original=buffer.getReadPointer(c)[i]*inputGain;
             auto& bass=transformerBass[(size_t)c];
@@ -105,9 +109,21 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
             const float hfDamping=0.12f*xfmr*juce::jlimit(0.0f,1.0f,std::abs(flux)*1.5f);
             const float transformed=xfmr>0.0001f ? magnetic-hfDamping*(magnetic-treble) : original;
             buffer.getWritePointer(c)[i]=transformed;
-            level=juce::jmax(level,std::abs(detector[(size_t)c].process(transformed,hpA)));
+            const float detected=detector[(size_t)c].process(transformed,hpA);
+            auto& low=detectorBass[(size_t)c];
+            low=bassSplit*low+(1.0f-bassSplit)*detected;
+            bassLevel=juce::jmax(bassLevel,std::abs(low));
+            presenceLevel=juce::jmax(presenceLevel,std::abs(detected-low));
         }
-        const float levelDb=juce::Decibels::gainToDecibels(juce::jmax(level,1.0e-8f),-160.0f);
+        const float bassCoef=bassLevel>bassEnvelope?bassAttack:bassRelease;
+        const float presenceCoef=presenceLevel>presenceEnvelope?presenceAttack:presenceRelease;
+        bassEnvelope=bassCoef*bassEnvelope+(1.0f-bassCoef)*bassLevel;
+        presenceEnvelope=presenceCoef*presenceEnvelope+(1.0f-presenceCoef)*presenceLevel;
+        // Reduced LF detector weight mitigates bass-driven pumping; presence still
+        // catches pick attacks. The gain change remains broadband.
+        const float weightedLevel=std::sqrt(0.36f*bassEnvelope*bassEnvelope+
+                                            presenceEnvelope*presenceEnvelope);
+        const float levelDb=juce::Decibels::gainToDecibels(juce::jmax(weightedLevel,1.0e-8f),-160.0f);
         const float above=levelDb-threshold;
         float target=0;
         if(knee<0.01f) target=juce::jmax(0.0f,above)*slope;
@@ -118,7 +134,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         slowMemory=juce::jmax(target,slowMemory*memoryRelease);
         const float tailWeight=juce::jlimit(0.0f,0.85f,slowMemory/32.0f);
         const float release=fastRelease+(slowRelease-fastRelease)*tailWeight;
-        const float envCoef=target>envelopeDb?attack:release;
+        const float envCoef=target>envelopeDb?presenceAttack:release;
         envelopeDb=envCoef*envelopeDb+(1.0f-envCoef)*target;
         smoothedGR=grSmooth*smoothedGR+(1.0f-grSmooth)*envelopeDb;
         const float gain=dbToGain(-smoothedGR);

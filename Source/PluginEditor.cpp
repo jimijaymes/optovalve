@@ -89,7 +89,7 @@ void OptoValveEditor::paint(juce::Graphics& g)
     g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(11.0f),12.0f,2.0f);
     g.setColour(cream);
     g.setFont(juce::Font(juce::FontOptions(33.0f,juce::Font::bold)));
-    g.drawText("OPTO  VALVE  1.3",35,22,500,48,juce::Justification::centredLeft);
+    g.drawText("OPTO  VALVE  1.4",35,22,500,48,juce::Justification::centredLeft);
     g.setFont(juce::Font(juce::FontOptions(12.0f)));
     g.drawText("PROGRAM DEPENDENT OPTICAL TUBE COMPRESSOR",38,68,460,22,juce::Justification::centredLeft);
     g.setColour(gold);
