@@ -66,7 +66,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const float threshold=-reduction;
     const float transformerInputMemoryCoef=coeff(0.012f,sampleRateHz);
     const float transformerDrive=1.0f+4.0f*xfmr;
-    const float transformerNorm=xfmr>0.0001f ? std::tanh(transformerDrive) : 1.0f;
+    const float transformerNorm=transformerDrive;
     // The dry delay compensates for the oversampler's host-rate group delay.
     // Store original input before gain reduction is applied.
     if(dryBuffer.getNumSamples()<n) dryBuffer.setSize(2,n,false,false,true);
