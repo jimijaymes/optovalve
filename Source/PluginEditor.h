@@ -19,9 +19,9 @@ private:
     };
     OptoValveProcessor& processor;
     std::array<Knob,7> knobs;
-    juce::ComboBox mode;
-    juce::Label modeLabel;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;
+    juce::ComboBox mode, releaseStyle;
+    juce::Label modeLabel, releaseLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment, releaseAttachment;
     juce::Rectangle<int> meterArea;
     float displayedReduction = 0.0f;
     void timerCallback() override;
