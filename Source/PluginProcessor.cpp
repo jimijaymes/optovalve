@@ -28,7 +28,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
 OptoValveProcessor::OptoValveProcessor() : AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)), parameters(*this,nullptr,"STATE",makeLayout()) {}
 void OptoValveProcessor::prepareToPlay(double sr, int maximumExpectedSamplesPerBlock)
 {
-    sampleRateHz=sr; detector={}; transformerMemory={0,0}; envelopeDb=slowMemory=smoothedGR=0; gainReductionDb.store(0);
+    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; envelopeDb=slowMemory=smoothedGR=0; gainReductionDb.store(0);
     preparedBlockSize = juce::jmax(1, maximumExpectedSamplesPerBlock);
     colourBuffer.setSize(2, preparedBlockSize);
     dryBuffer.setSize(2, preparedBlockSize);
@@ -68,9 +68,13 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const float slope=1.0f-1.0f/ratio;
     // Reduction maps to an approximate optical detector threshold; no fixed 1:1 hardware calibration.
     const float threshold=-reduction;
-    const float transformerInputMemoryCoef=coeff(0.012f,sampleRateHz);
-    const float transformerDrive=1.0f+1.5f*xfmr;
-    const float transformerNorm=transformerDrive;
+    // Approximate transformer core behaviour: LF flux accumulates, its
+    // saturation compresses the bass disproportionately, while HF passes
+    // mostly linearly. This is a perceptual model, not a SPICE transformer.
+    const float bassPole=std::exp(-2.0f*juce::MathConstants<float>::pi*180.0f/(float)sampleRateHz);
+    const float fluxPole=std::exp(-2.0f*juce::MathConstants<float>::pi*65.0f/(float)sampleRateHz);
+    const float treblePole=std::exp(-2.0f*juce::MathConstants<float>::pi*6500.0f/(float)sampleRateHz);
+    const float coreDrive=1.0f+2.5f*xfmr;
     // The dry delay compensates for the oversampler's host-rate group delay.
     // Store the trimmed signal before gain reduction is applied.
     if(dryBuffer.getNumSamples()<n) dryBuffer.setSize(2,n,false,false,true);
@@ -79,9 +83,21 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         float level=0;
         for(int c=0;c<channels;++c) {
             const float original=buffer.getReadPointer(c)[i]*inputGain;
-            auto& mem=transformerMemory[(size_t)c];
-            mem=transformerInputMemoryCoef*mem+(1.0f-transformerInputMemoryCoef)*original;
-            const float transformed=xfmr>0.0001f ? std::tanh((original+0.12f*xfmr*mem)*transformerDrive)/transformerNorm : original;
+            auto& bass=transformerBass[(size_t)c];
+            auto& flux=transformerFlux[(size_t)c];
+            auto& treble=transformerTreble[(size_t)c];
+            bass=bassPole*bass+(1.0f-bassPole)*original;
+            flux=fluxPole*flux+(1.0f-fluxPole)*bass;
+            // Symmetric core limiting with a dynamic LF-dependent knee.
+            // Normalising the derivative at zero preserves quiet detail.
+            const float effectiveDrive=coreDrive*(1.0f+0.9f*xfmr*juce::jmin(2.0f,std::abs(flux)));
+            const float saturatedBass=std::tanh(effectiveDrive*bass)/effectiveDrive;
+            // Retain the mid/high band largely linear: avoids broadband tanh fizz.
+            const float magnetic=original+xfmr*0.9f*(saturatedBass-bass);
+            // Gentle level-dependent HF softening, not hard HF clipping.
+            treble=treblePole*treble+(1.0f-treblePole)*magnetic;
+            const float hfDamping=0.12f*xfmr*juce::jlimit(0.0f,1.0f,std::abs(flux)*1.5f);
+            const float transformed=xfmr>0.0001f ? magnetic-hfDamping*(magnetic-treble) : original;
             buffer.getWritePointer(c)[i]=transformed;
             level=juce::jmax(level,std::abs(detector[(size_t)c].process(transformed,hpA)));
         }
@@ -112,7 +128,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         }
         dryDelayPosition=(dryDelayPosition+1)%dryDelay[0].size();
     }
-    // Nonlinear stages are evaluated at 4x the host sample rate to reduce aliasing.
+    // Tube nonlinearities are evaluated at 4x the host sample rate to reduce aliasing.\n    // The transformer core proxy above currently runs at the host rate.
     // Process in preallocated chunks so unexpectedly large host blocks do not allocate.
     // Transformer colour is applied before the compression detector.
     for(int offset=0;offset<n;offset+=preparedBlockSize)
@@ -131,7 +147,6 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         for(int c=0;c<2;++c)
         {
             float* samples=upBlock.getChannelPointer(static_cast<size_t>(c));
-            float& mem=transformerMemory[static_cast<size_t>(c)];
             for(int j=0;j<upCount;++j)
             {
                 float wet=samples[j];

@@ -12,7 +12,7 @@ public:
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
-    const juce::String getName() const override { return "OptoValve 1.1"; }
+    const juce::String getName() const override { return "OptoValve 1.2"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -30,7 +30,10 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout makeLayout();
     struct DetectorHP { float x1=0, y1=0; float process(float x, float a) { float y=a*(y1+x-x1); x1=x; y1=y; return y; } };
     std::array<DetectorHP,2> detector;
-    std::array<float,2> transformerMemory {0,0};
+    // Magnetic-flux proxy and frequency-dependent core response, per channel.
+    std::array<float,2> transformerFlux {0,0};
+    std::array<float,2> transformerBass {0,0};
+    std::array<float,2> transformerTreble {0,0};
     float envelopeDb=0.0f, slowMemory=0.0f, smoothedGR=0.0f;
     std::unique_ptr<juce::dsp::Oversampling<float>> colourOversampling;
     juce::AudioBuffer<float> colourBuffer, dryBuffer;
