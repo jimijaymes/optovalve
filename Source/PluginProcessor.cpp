@@ -20,6 +20,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
     p.add(std::make_unique<APF>(juce::ParameterID{"hpf",1}, "Sidechain HPF (Hz)", juce::NormalisableRange<float>(20,500,1,0.4f), 90));
     p.add(std::make_unique<APF>(juce::ParameterID{"tube",1}, "Tube Drive", juce::NormalisableRange<float>(0,100,0.1f), 25));
     p.add(std::make_unique<APF>(juce::ParameterID{"transformer",1}, "Transformer Drive", juce::NormalisableRange<float>(0,100,0.1f), 20));
+    p.add(std::make_unique<APC>(juce::ParameterID{"releaseStyle",1}, "Release Style", juce::StringArray{"LA-2A Slow", "LA-3A Fast"}, 0));
     p.add(std::make_unique<APF>(juce::ParameterID{"mix",1}, "Wet Mix (%)", juce::NormalisableRange<float>(0,100,0.1f), 100));
     return p;
 }
@@ -53,22 +54,33 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const float tube=*parameters.getRawParameterValue("tube")*0.01f;
     const float xfmr=*parameters.getRawParameterValue("transformer")*0.01f;
     const float mix=*parameters.getRawParameterValue("mix")*0.01f;
+    const bool fastMode=*parameters.getRawParameterValue("releaseStyle")>0.5f;
     const float hpA=1.0f/(1.0f+2.0f*juce::MathConstants<float>::pi*cutoff/(float)sampleRateHz);
     const float attack=coeff(0.010f,sampleRateHz);
-    const float fastRelease=coeff(0.075f,sampleRateHz);
-    const float slowRelease=coeff(1.6f,sampleRateHz);
-    const float memoryRelease=coeff(2.8f,sampleRateHz);
+    const float fastRelease=coeff(fastMode ? 0.045f : 0.075f,sampleRateHz);
+    const float slowRelease=coeff(fastMode ? 0.35f : 1.6f,sampleRateHz);
+    const float memoryRelease=coeff(fastMode ? 0.65f : 2.8f,sampleRateHz);
     const float grSmooth=coeff(0.004f,sampleRateHz);
     const float slope=1.0f-1.0f/ratio;
     // Reduction maps to an approximate optical detector threshold; no fixed 1:1 hardware calibration.
     const float threshold=-reduction;
+    const float transformerInputMemoryCoef=coeff(0.012f,sampleRateHz);
+    const float transformerDrive=1.0f+4.0f*xfmr;
+    const float transformerNorm=xfmr>0.0001f ? std::tanh(transformerDrive) : 1.0f;
     // The dry delay compensates for the oversampler's host-rate group delay.
     // Store original input before gain reduction is applied.
     if(dryBuffer.getNumSamples()<n) dryBuffer.setSize(2,n,false,false,true);
     for(int i=0;i<n;++i)
     {
         float level=0;
-        for(int c=0;c<channels;++c) level=juce::jmax(level,std::abs(detector[(size_t)c].process(buffer.getReadPointer(c)[i],hpA)));
+        for(int c=0;c<channels;++c) {
+            const float original=buffer.getReadPointer(c)[i];
+            auto& mem=transformerMemory[(size_t)c];
+            mem=transformerInputMemoryCoef*mem+(1.0f-transformerInputMemoryCoef)*original;
+            const float transformed=xfmr>0.0001f ? std::tanh((original+0.12f*xfmr*mem)*transformerDrive)/transformerNorm : original;
+            buffer.getWritePointer(c)[i]=transformed;
+            level=juce::jmax(level,std::abs(detector[(size_t)c].process(transformed,hpA)));
+        }
         const float levelDb=juce::Decibels::gainToDecibels(juce::jmax(level,1.0e-8f),-160.0f);
         const float above=levelDb-threshold;
         float target=0;
@@ -98,7 +110,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     }
     // Nonlinear stages are evaluated at 4x the host sample rate to reduce aliasing.
     // Process in preallocated chunks so unexpectedly large host blocks do not allocate.
-    const float memCoef=coeff(0.012f,sampleRateHz*4.0);
+    // Transformer colour is applied before the compression detector.
     for(int offset=0;offset<n;offset+=preparedBlockSize)
     {
         const int count=juce::jmin(preparedBlockSize,n-offset);
@@ -123,13 +135,9 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
                 {
                     const float drive=1.0f+5.0f*tube;
                     const float bias=0.18f*tube;
-                    wet=(sat(wet*drive+bias)-sat(bias))/drive;
-                }
-                if(xfmr>0.0001f)
-                {
-                    mem=memCoef*mem+(1.0f-memCoef)*wet;
-                    const float drive=1.0f+4.0f*xfmr;
-                    wet=sat((wet+mem*0.12f*xfmr)*drive)/sat(drive);
+                    const nonlinear=(sat(wet*drive+bias)-sat(bias))/drive;
+                    const smallSignal=1.0f-sat(bias)*sat(bias);
+                    wet=nonlinear/juce::jmax(0.15f,smallSignal);
                 }
                 samples[j]=wet;
             }
@@ -147,7 +155,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
             }
         }
     }
-    gainReductionDb.store(smoothedGR,std::memory_order_relaxed);
+    gainReductionDb.store(juce::jmax(0.0f,smoothedGR),std::memory_order_relaxed);
 }
 juce::AudioProcessorEditor* OptoValveProcessor::createEditor() { return new OptoValveEditor(*this); }
 void OptoValveProcessor::getStateInformation(juce::MemoryBlock& b) { auto xml=parameters.copyState().createXml(); copyXmlToBinary(*xml,b); }
