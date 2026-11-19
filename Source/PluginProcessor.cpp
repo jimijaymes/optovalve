@@ -135,8 +135,8 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
                 {
                     const float drive=1.0f+5.0f*tube;
                     const float bias=0.18f*tube;
-                    const nonlinear=(sat(wet*drive+bias)-sat(bias))/drive;
-                    const smallSignal=1.0f-sat(bias)*sat(bias);
+                    const float nonlinear=(sat(wet*drive+bias)-sat(bias))/drive;
+                    const float smallSignal=1.0f-sat(bias)*sat(bias);
                     wet=nonlinear/juce::jmax(0.15f,smallSignal);
                 }
                 samples[j]=wet;
