@@ -71,6 +71,11 @@ OptoValveEditor::OptoValveEditor(OptoValveProcessor& p) : AudioProcessorEditor(p
     releaseLabel.setJustificationType(juce::Justification::centred);
     releaseLabel.setColour(juce::Label::textColourId,cream);
     addAndMakeVisible(releaseLabel);
+    lofiSwitch.setButtonText("VINTAGE BANDWIDTH");
+    lofiSwitch.setColour(juce::ToggleButton::textColourId,cream);
+    lofiSwitch.setColour(juce::ToggleButton::tickColourId,gold);
+    addAndMakeVisible(lofiSwitch);
+    lofiAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.parameters,"lofi",lofiSwitch);
     setSize(1030, 520);
     startTimerHz(30);
 }
@@ -84,7 +89,7 @@ void OptoValveEditor::paint(juce::Graphics& g)
     g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(11.0f),12.0f,2.0f);
     g.setColour(cream);
     g.setFont(juce::Font(juce::FontOptions(33.0f,juce::Font::bold)));
-    g.drawText("OPTO  VALVE  1.2",35,22,500,48,juce::Justification::centredLeft);
+    g.drawText("OPTO  VALVE  1.3",35,22,500,48,juce::Justification::centredLeft);
     g.setFont(juce::Font(juce::FontOptions(12.0f)));
     g.drawText("PROGRAM DEPENDENT OPTICAL TUBE COMPRESSOR",38,68,460,22,juce::Justification::centredLeft);
     g.setColour(gold);
@@ -139,6 +144,7 @@ void OptoValveEditor::resized()
     mode.setBounds(798,218,185,30);
     releaseLabel.setBounds(784,266,210,22);
     releaseStyle.setBounds(798,292,185,30);
+    lofiSwitch.setBounds(794,353,205,32);
 }
 
 void OptoValveEditor::timerCallback()

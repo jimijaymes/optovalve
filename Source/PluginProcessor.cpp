@@ -12,6 +12,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
 {
     using APF=juce::AudioParameterFloat;
     using APC=juce::AudioParameterChoice;
+    using APB=juce::AudioParameterBool;
     juce::AudioProcessorValueTreeState::ParameterLayout p;
     p.add(std::make_unique<APF>(juce::ParameterID{"input",1}, "Input Trim (dB)", juce::NormalisableRange<float>(-24.0f,12.0f,0.1f), 0.0f));
     p.add(std::make_unique<APF>(juce::ParameterID{"reduction",1}, "Peak Reduction", juce::NormalisableRange<float>(0,60,0.1f), 25));
@@ -22,13 +23,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
     p.add(std::make_unique<APF>(juce::ParameterID{"tube",1}, "Tube Drive", juce::NormalisableRange<float>(0,100,0.1f), 25));
     p.add(std::make_unique<APF>(juce::ParameterID{"transformer",1}, "Transformer Drive", juce::NormalisableRange<float>(0,100,0.1f), 20));
     p.add(std::make_unique<APC>(juce::ParameterID{"releaseStyle",1}, "Release Style", juce::StringArray{"LA-2A Slow", "LA-3A Fast"}, 0));
+    p.add(std::make_unique<APB>(juce::ParameterID{"lofi",1}, "Vintage Bandwidth", false));
     p.add(std::make_unique<APF>(juce::ParameterID{"mix",1}, "Wet Mix (%)", juce::NormalisableRange<float>(0,100,0.1f), 100));
     return p;
 }
 OptoValveProcessor::OptoValveProcessor() : AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)), parameters(*this,nullptr,"STATE",makeLayout()) {}
 void OptoValveProcessor::prepareToPlay(double sr, int maximumExpectedSamplesPerBlock)
 {
-    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; envelopeDb=slowMemory=smoothedGR=0; gainReductionDb.store(0);
+    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; envelopeDb=slowMemory=smoothedGR=0; gainReductionDb.store(0);
     preparedBlockSize = juce::jmax(1, maximumExpectedSamplesPerBlock);
     colourBuffer.setSize(2, preparedBlockSize);
     dryBuffer.setSize(2, preparedBlockSize);
@@ -56,6 +58,10 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const float tube=*parameters.getRawParameterValue("tube")*0.01f;
     const float xfmr=*parameters.getRawParameterValue("transformer")*0.01f;
     const float mix=*parameters.getRawParameterValue("mix")*0.01f;
+    const float vintageTarget=*parameters.getRawParameterValue("lofi")>0.5f ? 1.0f : 0.0f;
+    // Gentle one-pole 12 kHz bandwidth limitation on the wet signal.
+    const float vintagePole=std::exp(-2.0f*juce::MathConstants<float>::pi*12000.0f/(float)sampleRateHz);
+    const float switchPole=coeff(0.015f,sampleRateHz);
     const bool fastMode=*parameters.getRawParameterValue("releaseStyle")>0.5f;
     const float hpA=1.0f/(1.0f+2.0f*juce::MathConstants<float>::pi*cutoff/(float)sampleRateHz);
     // LA-2A nominal attack is approximately 10 ms; measured response is program-dependent.
@@ -128,7 +134,8 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         }
         dryDelayPosition=(dryDelayPosition+1)%dryDelay[0].size();
     }
-    // Tube nonlinearities are evaluated at 4x the host sample rate to reduce aliasing.\n    // The transformer core proxy above currently runs at the host rate.
+    // Tube nonlinearities are evaluated at 4x the host sample rate to reduce aliasing.
+    // The transformer core proxy above currently runs at the host rate.
     // Process in preallocated chunks so unexpectedly large host blocks do not allocate.
     // Transformer colour is applied before the compression detector.
     for(int offset=0;offset<n;offset+=preparedBlockSize)
@@ -163,15 +170,19 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
             }
         }
         colourOversampling->processSamplesDown(inputSlice);
-        for(int c=0;c<channels;++c)
+        // Smooth the switch once per sample, shared across channels.
+        for(int j=0;j<count;++j)
         {
-            float* dest=buffer.getWritePointer(c,offset);
-            const float* wet=colourBuffer.getReadPointer(c);
-            for(int j=0;j<count;++j)
+            vintageHighCutBlend=switchPole*vintageHighCutBlend+(1.0f-switchPole)*vintageTarget;
+            for(int c=0;c<channels;++c)
             {
-                // Original dry path must be delayed to match oversampling latency.
-                // The colour path is always active, including with zero drive.
-                dest[j]=wet[j]*makeup*mix + dryBuffer.getReadPointer(c,offset)[j]*(1.0f-mix);
+                float* dest=buffer.getWritePointer(c,offset);
+                const float* wet=colourBuffer.getReadPointer(c);
+                auto& filtered=vintageHighCutState[(size_t)c];
+                filtered=vintagePole*filtered+(1.0f-vintagePole)*wet[j];
+                const float vintageWet=wet[j]+vintageHighCutBlend*(filtered-wet[j]);
+                // Apply the vintage bandwidth only to the processed wet path.
+                dest[j]=vintageWet*makeup*mix + dryBuffer.getReadPointer(c,offset)[j]*(1.0f-mix);
             }
         }
     }
