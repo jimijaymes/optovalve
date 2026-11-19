@@ -31,8 +31,8 @@ void OptoValveEditor::DialLookAndFeel::drawRotarySlider(juce::Graphics& g, int x
 
 OptoValveEditor::OptoValveEditor(OptoValveProcessor& p) : AudioProcessorEditor(p), processor(p)
 {
-    const char* ids[] = {"reduction", "output", "knee", "hpf", "tube", "transformer", "mix"};
-    const char* names[] = {"PEAK REDUCTION", "GAIN", "KNEE", "SC HIGH PASS", "TUBE DRIVE", "TRANSFORMER", "MIX"};
+    const char* ids[] = {"input", "reduction", "output", "knee", "hpf", "tube", "transformer", "mix"};
+    const char* names[] = {"INPUT TRIM", "PEAK REDUCTION", "GAIN", "KNEE", "SC HIGH PASS", "TUBE DRIVE", "TRANSFORMER", "MIX"};
     for (size_t i=0; i<knobs.size(); ++i) {
         auto& k=knobs[i];
         k.slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -71,7 +71,7 @@ OptoValveEditor::OptoValveEditor(OptoValveProcessor& p) : AudioProcessorEditor(p
     releaseLabel.setJustificationType(juce::Justification::centred);
     releaseLabel.setColour(juce::Label::textColourId,cream);
     addAndMakeVisible(releaseLabel);
-    setSize(950, 490);
+    setSize(1030, 520);
     startTimerHz(30);
 }
 
@@ -84,11 +84,11 @@ void OptoValveEditor::paint(juce::Graphics& g)
     g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(11.0f),12.0f,2.0f);
     g.setColour(cream);
     g.setFont(juce::Font(juce::FontOptions(33.0f,juce::Font::bold)));
-    g.drawText("OPTO  VALVE",35,22,450,48,juce::Justification::centredLeft);
+    g.drawText("OPTO  VALVE  1.1",35,22,500,48,juce::Justification::centredLeft);
     g.setFont(juce::Font(juce::FontOptions(12.0f)));
     g.drawText("PROGRAM DEPENDENT OPTICAL TUBE COMPRESSOR",38,68,460,22,juce::Justification::centredLeft);
     g.setColour(gold);
-    g.drawLine(32.0f,105.0f,918.0f,105.0f,2.0f);
+    g.drawLine(32.0f,105.0f,998.0f,105.0f,2.0f);
     const auto m=meterArea.toFloat();
     g.setColour(juce::Colour(0xff151a1a));
     g.fillRoundedRectangle(m,9.0f);
@@ -122,24 +122,23 @@ void OptoValveEditor::paint(juce::Graphics& g)
     g.drawText("30", (int)(c.x-radius*0.70f)-8,(int)(c.y+radius*0.31f)-8,28,18,juce::Justification::centred);
     g.setColour(cream);
     g.setFont(juce::Font(juce::FontOptions(11.0f)));
-    g.drawText("OPTICAL LEVELING AMPLIFIER   •   ORIGINAL DSP DESIGN",30,454,620,20,juce::Justification::centredLeft);
+    g.drawText("OPTICAL LEVELING AMPLIFIER   •   ORIGINAL DSP DESIGN",30,484,620,20,juce::Justification::centredLeft);
 }
 
 void OptoValveEditor::resized()
 {
-    meterArea={690,20,225,155};
-    const int xs[]={28,176,324,472,620,768,768};
-    for(int i=0;i<7;++i) {
-        const bool bottom = i>=4;
-        const int x = bottom ? 60+(i-4)*245 : 38+i*152;
-        const int y = bottom ? 294 : 131;
-        knobs[(size_t)i].slider.setBounds(x,y,130,113);
-        knobs[(size_t)i].label.setBounds(x-5,y+110,140,25);
+    meterArea={775,20,225,155};
+    // Four knobs per row; the input trim sits first in the signal-flow layout.
+    for(int i=0;i<8;++i) {
+        const int x=32+(i%4)*182;
+        const int y=135+(i/4)*167;
+        knobs[(size_t)i].slider.setBounds(x,y,136,113);
+        knobs[(size_t)i].label.setBounds(x-5,y+110,146,25);
     }
-    modeLabel.setBounds(692,187,215,22);
-    mode.setBounds(707,213,190,30);
-    releaseLabel.setBounds(692,250,215,22);
-    releaseStyle.setBounds(707,276,190,30);
+    modeLabel.setBounds(784,192,210,22);
+    mode.setBounds(798,218,185,30);
+    releaseLabel.setBounds(784,266,210,22);
+    releaseStyle.setBounds(798,292,185,30);
 }
 
 void OptoValveEditor::timerCallback()

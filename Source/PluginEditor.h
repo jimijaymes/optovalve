@@ -18,7 +18,7 @@ private:
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
     };
     OptoValveProcessor& processor;
-    std::array<Knob,7> knobs;
+    std::array<Knob,8> knobs;
     juce::ComboBox mode, releaseStyle;
     juce::Label modeLabel, releaseLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment, releaseAttachment;

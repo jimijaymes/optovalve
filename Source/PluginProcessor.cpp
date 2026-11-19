@@ -13,6 +13,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
     using APF=juce::AudioParameterFloat;
     using APC=juce::AudioParameterChoice;
     juce::AudioProcessorValueTreeState::ParameterLayout p;
+    p.add(std::make_unique<APF>(juce::ParameterID{"input",1}, "Input Trim (dB)", juce::NormalisableRange<float>(-24.0f,12.0f,0.1f), 0.0f));
     p.add(std::make_unique<APF>(juce::ParameterID{"reduction",1}, "Peak Reduction", juce::NormalisableRange<float>(0,60,0.1f), 25));
     p.add(std::make_unique<APF>(juce::ParameterID{"output",1}, "Output Gain (dB)", juce::NormalisableRange<float>(-24,24,0.1f), 0));
     p.add(std::make_unique<APC>(juce::ParameterID{"mode",1}, "Mode", juce::StringArray{"Compress 4:1", "Limit 10:1"}, 0));
@@ -46,6 +47,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const int n=buffer.getNumSamples(), channels=juce::jmin(2,buffer.getNumChannels());
     if(channels==0) return;
     for(int c=channels;c<buffer.getNumChannels();++c) buffer.clear(c,0,n);
+    const float inputGain=dbToGain(parameters.getRawParameterValue("input")->load(std::memory_order_relaxed));
     const float reduction=*parameters.getRawParameterValue("reduction");
     const float makeup=dbToGain(*parameters.getRawParameterValue("output"));
     const float ratio=*parameters.getRawParameterValue("mode") < 0.5f ? 4.0f : 10.0f;
@@ -56,25 +58,27 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const float mix=*parameters.getRawParameterValue("mix")*0.01f;
     const bool fastMode=*parameters.getRawParameterValue("releaseStyle")>0.5f;
     const float hpA=1.0f/(1.0f+2.0f*juce::MathConstants<float>::pi*cutoff/(float)sampleRateHz);
+    // LA-2A nominal attack is approximately 10 ms; measured response is program-dependent.
     const float attack=coeff(0.010f,sampleRateHz);
     const float fastRelease=coeff(fastMode ? 0.045f : 0.075f,sampleRateHz);
     const float slowRelease=coeff(fastMode ? 0.35f : 1.6f,sampleRateHz);
     const float memoryRelease=coeff(fastMode ? 0.65f : 2.8f,sampleRateHz);
-    const float grSmooth=coeff(0.004f,sampleRateHz);
+    // Keep the secondary smoothing short so it does not noticeably slow the 10 ms attack.
+    const float grSmooth=coeff(0.0005f,sampleRateHz);
     const float slope=1.0f-1.0f/ratio;
     // Reduction maps to an approximate optical detector threshold; no fixed 1:1 hardware calibration.
     const float threshold=-reduction;
     const float transformerInputMemoryCoef=coeff(0.012f,sampleRateHz);
-    const float transformerDrive=1.0f+4.0f*xfmr;
+    const float transformerDrive=1.0f+1.5f*xfmr;
     const float transformerNorm=transformerDrive;
     // The dry delay compensates for the oversampler's host-rate group delay.
-    // Store original input before gain reduction is applied.
+    // Store the trimmed signal before gain reduction is applied.
     if(dryBuffer.getNumSamples()<n) dryBuffer.setSize(2,n,false,false,true);
     for(int i=0;i<n;++i)
     {
         float level=0;
         for(int c=0;c<channels;++c) {
-            const float original=buffer.getReadPointer(c)[i];
+            const float original=buffer.getReadPointer(c)[i]*inputGain;
             auto& mem=transformerMemory[(size_t)c];
             mem=transformerInputMemoryCoef*mem+(1.0f-transformerInputMemoryCoef)*original;
             const float transformed=xfmr>0.0001f ? std::tanh((original+0.12f*xfmr*mem)*transformerDrive)/transformerNorm : original;
@@ -133,11 +137,12 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
                 float wet=samples[j];
                 if(tube>0.0001f)
                 {
-                    const float drive=1.0f+5.0f*tube;
-                    const float bias=0.18f*tube;
-                    const float nonlinear=(sat(wet*drive+bias)-sat(bias))/drive;
+                    const float drive=1.0f+1.5f*tube;
+                    const float bias=0.08f*tube;
+                    // Unity small-signal gain; soft saturation grows gradually with drive.
+                    const float nonlinear=(sat(wet*drive+bias)-sat(bias));
                     const float smallSignal=1.0f-sat(bias)*sat(bias);
-                    wet=nonlinear/juce::jmax(0.15f,smallSignal);
+                    wet=nonlinear/(drive*juce::jmax(0.15f,smallSignal));
                 }
                 samples[j]=wet;
             }
