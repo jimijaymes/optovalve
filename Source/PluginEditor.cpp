@@ -60,7 +60,18 @@ OptoValveEditor::OptoValveEditor(OptoValveProcessor& p) : AudioProcessorEditor(p
     modeLabel.setJustificationType(juce::Justification::centred);
     modeLabel.setColour(juce::Label::textColourId,cream);
     addAndMakeVisible(modeLabel);
-    setSize(950, 470);
+    releaseStyle.addItem("LA-2A  SLOW",1);
+    releaseStyle.addItem("LA-3A  FAST",2);
+    releaseStyle.setColour(juce::ComboBox::backgroundColourId,ink);
+    releaseStyle.setColour(juce::ComboBox::textColourId,cream);
+    releaseStyle.setColour(juce::ComboBox::outlineColourId,gold);
+    addAndMakeVisible(releaseStyle);
+    releaseAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(p.parameters,"releaseStyle",releaseStyle);
+    releaseLabel.setText("OPTICAL RELEASE",juce::dontSendNotification);
+    releaseLabel.setJustificationType(juce::Justification::centred);
+    releaseLabel.setColour(juce::Label::textColourId,cream);
+    addAndMakeVisible(releaseLabel);
+    setSize(950, 490);
     startTimerHz(30);
 }
 
@@ -92,7 +103,7 @@ void OptoValveEditor::paint(juce::Graphics& g)
     const auto c=m.getCentre();
     const float radius=juce::jmin(m.getWidth()*0.39f,m.getHeight()*0.55f);
     for(int i=0;i<=8;++i) {
-        const float a=juce::degreesToRadians(-65.0f+130.0f*i/8.0f);
+        const float a=juce::degreesToRadians(65.0f-130.0f*i/8.0f);
         const float sx=c.x+std::sin(a)*radius*0.70f;
         const float sy=c.y+std::cos(a)*radius*0.70f;
         const float ex=c.x+std::sin(a)*radius*0.85f;
@@ -100,14 +111,18 @@ void OptoValveEditor::paint(juce::Graphics& g)
         g.drawLine(sx,sy,ex,ey,1.4f);
     }
     const float value=juce::jlimit(0.0f,30.0f,displayedReduction);
-    const float angle=juce::degreesToRadians(-65.0f+130.0f*(value/30.0f));
+    const float angle=juce::degreesToRadians(65.0f-130.0f*(value/30.0f));
     g.setColour(juce::Colour(0xffae4c36));
     g.drawLine(c.x,c.y+24.0f,c.x+std::sin(angle)*radius*0.84f,c.y+std::cos(angle)*radius*0.84f,2.8f);
     g.setColour(ink);
     g.fillEllipse(c.x-6,c.y+18,12,12);
+    g.setColour(ink);
+    g.setFont(juce::Font(juce::FontOptions(11.0f,juce::Font::bold)));
+    g.drawText("0", (int)(c.x+radius*0.70f)-8,(int)(c.y+radius*0.31f)-8,22,18,juce::Justification::centred);
+    g.drawText("30", (int)(c.x-radius*0.70f)-8,(int)(c.y+radius*0.31f)-8,28,18,juce::Justification::centred);
     g.setColour(cream);
     g.setFont(juce::Font(juce::FontOptions(11.0f)));
-    g.drawText("LA-2A INSPIRED  •  ORIGINAL DSP DESIGN",30,432,600,20,juce::Justification::centredLeft);
+    g.drawText("OPTICAL LEVELING AMPLIFIER   •   ORIGINAL DSP DESIGN",30,454,620,20,juce::Justification::centredLeft);
 }
 
 void OptoValveEditor::resized()
@@ -123,6 +138,8 @@ void OptoValveEditor::resized()
     }
     modeLabel.setBounds(692,187,215,22);
     mode.setBounds(707,213,190,30);
+    releaseLabel.setBounds(692,250,215,22);
+    releaseStyle.setBounds(707,276,190,30);
 }
 
 void OptoValveEditor::timerCallback()
