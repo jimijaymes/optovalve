@@ -20,6 +20,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
     p.add(std::make_unique<APC>(juce::ParameterID{"mode",1}, "Mode", juce::StringArray{"Compress 4:1", "Limit 10:1"}, 0));
     p.add(std::make_unique<APF>(juce::ParameterID{"knee",1}, "Knee (dB)", juce::NormalisableRange<float>(0,24,0.1f), 12));
     p.add(std::make_unique<APF>(juce::ParameterID{"hpf",1}, "Sidechain HPF (Hz)", juce::NormalisableRange<float>(20,500,1,0.4f), 90));
+    p.add(std::make_unique<APF>(juce::ParameterID{"scEmphasis",1}, "Sidechain Emphasis (%)", juce::NormalisableRange<float>(0,100,0.1f), 0));
     p.add(std::make_unique<APF>(juce::ParameterID{"tube",1}, "Tube Drive", juce::NormalisableRange<float>(0,100,0.1f), 25));
     p.add(std::make_unique<APF>(juce::ParameterID{"transformer",1}, "Transformer Drive", juce::NormalisableRange<float>(0,100,0.1f), 20));
     p.add(std::make_unique<APC>(juce::ParameterID{"releaseStyle",1}, "Release Style", juce::StringArray{"LA-2A Slow", "LA-3A Fast"}, 0));
@@ -31,7 +32,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
 OptoValveProcessor::OptoValveProcessor() : AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)), parameters(*this,nullptr,"STATE",makeLayout()) {}
 void OptoValveProcessor::prepareToPlay(double sr, int maximumExpectedSamplesPerBlock)
 {
-    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; outputCoreFlux={0,0}; outputCoreBass={0,0}; outputCoreTreble={0,0}; tubeBiasMemory={0,0}; tubeCathodeMemory={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; t4FastCell=t4SlowCell=t4Exposure=t4GainReduction=responseBlend=0.0f; gainReductionDb.store(0);
+    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; outputCoreFlux={0,0}; outputCoreBass={0,0}; outputCoreTreble={0,0}; tubeBiasMemory={0,0}; tubeCathodeMemory={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; sidechainEmphasisLow={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; t4FastCell=t4SlowCell=t4Exposure=t4GainReduction=responseBlend=0.0f; gainReductionDb.store(0);
     preparedBlockSize = juce::jmax(1, maximumExpectedSamplesPerBlock);
     colourBuffer.setSize(2, preparedBlockSize);
     dryBuffer.setSize(2, preparedBlockSize);
@@ -56,6 +57,10 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const float ratio=*parameters.getRawParameterValue("mode") < 0.5f ? 4.0f : 10.0f;
     const float knee=*parameters.getRawParameterValue("knee");
     const float cutoff=*parameters.getRawParameterValue("hpf");
+    const float scEmphasis=*parameters.getRawParameterValue("scEmphasis")*0.01f;
+    // Detector-only high-frequency shelf: 0% neutral, 100% ~+9 dB at HF.
+    const float scShelfBoost=std::pow(10.0f,9.0f*scEmphasis/20.0f)-1.0f;
+    const float scShelfPole=std::exp(-2.0f*juce::MathConstants<float>::pi*1000.0f/(float)sampleRateHz);
     const float tube=*parameters.getRawParameterValue("tube")*0.01f;
     const float xfmr=*parameters.getRawParameterValue("transformer")*0.01f;
     const float mix=*parameters.getRawParameterValue("mix")*0.01f;
@@ -119,11 +124,14 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
             const float transformed=xfmr>0.0001f ? magnetic-hfDamping*(magnetic-treble) : original;
             buffer.getWritePointer(c)[i]=transformed;
             const float detected=detector[(size_t)c].process(transformed,hpA);
-            classicLevel=juce::jmax(classicLevel,std::abs(detected));
+            auto& scLow=sidechainEmphasisLow[(size_t)c];
+            scLow=scShelfPole*scLow+(1.0f-scShelfPole)*detected;
+            const float weightedDetected=detected+scShelfBoost*(detected-scLow);
+            classicLevel=juce::jmax(classicLevel,std::abs(weightedDetected));
             auto& low=detectorBass[(size_t)c];
-            low=bassSplit*low+(1.0f-bassSplit)*detected;
+            low=bassSplit*low+(1.0f-bassSplit)*weightedDetected;
             bassLevel=juce::jmax(bassLevel,std::abs(low));
-            presenceLevel=juce::jmax(presenceLevel,std::abs(detected-low));
+            presenceLevel=juce::jmax(presenceLevel,std::abs(weightedDetected-low));
         }
         const float bassCoef=bassLevel>bassEnvelope?bassAttack:bassRelease;
         const float presenceCoef=presenceLevel>presenceEnvelope?presenceAttack:presenceRelease;
