@@ -18,7 +18,7 @@ private:
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
     };
     OptoValveProcessor& processor;
-    std::array<Knob,8> knobs;
+    std::array<Knob,9> knobs;
     juce::ComboBox mode, releaseStyle, responseMode;
     juce::ToggleButton lofiSwitch;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lofiAttachment;
