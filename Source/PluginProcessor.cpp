@@ -33,7 +33,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
 OptoValveProcessor::OptoValveProcessor() : AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)), parameters(*this,nullptr,"STATE",makeLayout()) {}
 void OptoValveProcessor::prepareToPlay(double sr, int maximumExpectedSamplesPerBlock)
 {
-    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; outputCoreFlux={0,0}; outputCoreBass={0,0}; outputCoreTreble={0,0}; tubeBiasMemory={0,0}; tubeCathodeMemory={0,0}; fetOutputBias={0,0}; fetOutputHigh={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; sidechainEmphasisLow={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; t4FastCell=t4SlowCell=t4Exposure=t4GainReduction=responseBlend=0.0f; gainReductionDb.store(0);
+    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; input1176CoreHigh={0,0}; input1176Flux={0,0}; outputCoreFlux={0,0}; outputCoreBass={0,0}; outputCoreTreble={0,0}; tubeBiasMemory={0,0}; tubeCathodeMemory={0,0}; fetOutputBias={0,0}; fetOutputHigh={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; sidechainEmphasisLow={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; t4FastCell=t4SlowCell=t4Exposure=t4GainReduction=responseBlend=0.0f; gainReductionDb.store(0);
     preparedBlockSize = juce::jmax(1, maximumExpectedSamplesPerBlock);
     colourBuffer.setSize(2, preparedBlockSize);
     dryBuffer.setSize(2, preparedBlockSize);
@@ -103,6 +103,11 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const float fluxPole=std::exp(-2.0f*juce::MathConstants<float>::pi*65.0f/(float)sampleRateHz);
     const float treblePole=std::exp(-2.0f*juce::MathConstants<float>::pi*6500.0f/(float)sampleRateHz);
     const float coreDrive=1.0f+2.5f*xfmr;
+    // Saturator 1176 UTC input voicing (model 5): 28 Hz core loading,
+    // 15.5 kHz upper response, low magnetic drive and modest amplifier colour.
+    const float utcHP=std::exp(-2.0f*juce::MathConstants<float>::pi*28.0f/(float)sampleRateHz);
+    const float utcLP=std::exp(-2.0f*juce::MathConstants<float>::pi*15500.0f/(float)sampleRateHz);
+    const float utcLeak=std::exp(-2.0f*juce::MathConstants<float>::pi*15.4f/(float)sampleRateHz);
     // The dry delay compensates for the oversampler's host-rate group delay.
     // Store the trimmed signal before gain reduction is applied.
     if(dryBuffer.getNumSamples()<n) dryBuffer.setSize(2,n,false,false,true);
@@ -114,6 +119,38 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
             auto& bass=transformerBass[(size_t)c];
             auto& flux=transformerFlux[(size_t)c];
             auto& treble=transformerTreble[(size_t)c];
+            if(fetOutput) {
+                // Port of the Saturator 1176 UTC Input magnetic/amp algorithm.
+                // Transformer Drive scales the saturation intensity while retaining
+                // a near-clean response at zero; no valve stage is removed.
+                const float drive=1.0f+1.5f*xfmr;
+                constexpr float character=0.5f;
+                auto& coreHigh=input1176CoreHigh[(size_t)c];
+                auto& utcFlux=input1176Flux[(size_t)c];
+                bass=utcHP*bass+(1.0f-utcHP)*original;
+                coreHigh=utcLP*coreHigh+(1.0f-utcLP)*original;
+                const float ac=original-bass;
+                utcFlux=utcLeak*utcFlux+(1.0f-utcLeak)*ac*5.0f;
+                const float magnetic=utcFlux*0.7f*drive*0.22f;
+                const float coreDist=(std::tanh(magnetic)-magnetic)*(0.04f+0.15f*character);
+                const float ampDrive=drive*(0.65f+0.2f*character);
+                const float ampY=(std::tanh(original*ampDrive+0.02f)-std::tanh(0.02f))/juce::jmax(0.1f,ampDrive);
+                const float ampBlend=0.14f+0.36f*character;
+                const float coloured=(1.0f-ampBlend)*original+ampBlend*ampY+coreDist
+                                    -(original-coreHigh)*(0.015f+0.065f*character);
+                const float transformed=original+xfmr*(coloured-original);
+                buffer.getWritePointer(c)[i]=transformed;
+                const float detected=detector[(size_t)c].process(transformed,hpA);
+                auto& scLow=sidechainEmphasisLow[(size_t)c];
+                scLow=scShelfPole*scLow+(1.0f-scShelfPole)*detected;
+                const float weightedDetected=detected+scShelfBoost*(detected-scLow);
+                classicLevel=juce::jmax(classicLevel,std::abs(weightedDetected));
+                auto& low=detectorBass[(size_t)c];
+                low=bassSplit*low+(1.0f-bassSplit)*weightedDetected;
+                bassLevel=juce::jmax(bassLevel,std::abs(low));
+                presenceLevel=juce::jmax(presenceLevel,std::abs(weightedDetected-low));
+                continue;
+            }
             bass=bassPole*bass+(1.0f-bassPole)*original;
             flux=fluxPole*flux+(1.0f-fluxPole)*bass;
             // Symmetric core limiting with a dynamic LF-dependent knee.
