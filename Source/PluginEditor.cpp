@@ -31,8 +31,8 @@ void OptoValveEditor::DialLookAndFeel::drawRotarySlider(juce::Graphics& g, int x
 
 OptoValveEditor::OptoValveEditor(OptoValveProcessor& p) : AudioProcessorEditor(p), processor(p)
 {
-    const char* ids[] = {"input", "reduction", "output", "knee", "hpf", "tube", "transformer", "mix"};
-    const char* names[] = {"INPUT TRIM", "PEAK REDUCTION", "GAIN", "KNEE", "SC HIGH PASS", "TUBE DRIVE", "TRANSFORMER", "MIX"};
+    const char* ids[] = {"input", "reduction", "output", "knee", "hpf", "tube", "transformer", "mix", "scEmphasis"};
+    const char* names[] = {"INPUT TRIM", "PEAK REDUCTION", "GAIN", "KNEE", "SC HIGH PASS", "TUBE DRIVE", "TRANSFORMER", "MIX", "SC EMPHASIS"};
     for (size_t i=0; i<knobs.size(); ++i) {
         auto& k=knobs[i];
         k.slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -87,7 +87,7 @@ OptoValveEditor::OptoValveEditor(OptoValveProcessor& p) : AudioProcessorEditor(p
     lofiSwitch.setColour(juce::ToggleButton::tickColourId,gold);
     addAndMakeVisible(lofiSwitch);
     lofiAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.parameters,"lofi",lofiSwitch);
-    setSize(1030, 520);
+    setSize(1030, 650);
     startTimerHz(30);
 }
 
@@ -138,7 +138,7 @@ void OptoValveEditor::paint(juce::Graphics& g)
     g.drawText("30", (int)(c.x-radius*0.70f)-8,(int)(c.y+radius*0.31f)-8,28,18,juce::Justification::centred);
     g.setColour(cream);
     g.setFont(juce::Font(juce::FontOptions(11.0f)));
-    g.drawText("OPTICAL LEVELING AMPLIFIER   •   ORIGINAL DSP DESIGN",30,484,620,20,juce::Justification::centredLeft);
+    g.drawText("OPTICAL LEVELING AMPLIFIER   •   ORIGINAL DSP DESIGN",30,614,620,20,juce::Justification::centredLeft);
 }
 
 void OptoValveEditor::resized()
@@ -151,6 +151,8 @@ void OptoValveEditor::resized()
         knobs[(size_t)i].slider.setBounds(x,y,136,113);
         knobs[(size_t)i].label.setBounds(x-5,y+110,146,25);
     }
+    knobs[8].slider.setBounds(32,465,136,113);
+    knobs[8].label.setBounds(27,575,146,25);
     modeLabel.setBounds(784,192,210,22);
     mode.setBounds(798,218,185,30);
     releaseLabel.setBounds(784,266,210,22);
