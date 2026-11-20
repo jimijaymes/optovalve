@@ -31,7 +31,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
 OptoValveProcessor::OptoValveProcessor() : AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)), parameters(*this,nullptr,"STATE",makeLayout()) {}
 void OptoValveProcessor::prepareToPlay(double sr, int maximumExpectedSamplesPerBlock)
 {
-    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; tubeBiasMemory={0,0}; tubeCathodeMemory={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; t4FastCell=t4SlowCell=t4Exposure=t4GainReduction=responseBlend=0.0f; gainReductionDb.store(0);
+    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; outputCoreFlux={0,0}; outputCoreBass={0,0}; outputCoreTreble={0,0}; tubeBiasMemory={0,0}; tubeCathodeMemory={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; t4FastCell=t4SlowCell=t4Exposure=t4GainReduction=responseBlend=0.0f; gainReductionDb.store(0);
     preparedBlockSize = juce::jmax(1, maximumExpectedSamplesPerBlock);
     colourBuffer.setSize(2, preparedBlockSize);
     dryBuffer.setSize(2, preparedBlockSize);
@@ -228,6 +228,23 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
                     const float smallSignal=1.0f-std::tanh(bias)*std::tanh(bias);
                     wet=(asymmetric-baseline)/(drive*juce::jmax(0.15f,smallSignal));
                 }
+                // Separate LA-2A-inspired output transformer. LF magnetisation
+                // has a slower memory than the input stage; nonlinear loss
+                // rises with flux and level. This is not a measured core model.
+                auto& outBass=outputCoreBass[(size_t)c];
+                auto& outFlux=outputCoreFlux[(size_t)c];
+                auto& outTreble=outputCoreTreble[(size_t)c];
+                const float osRate=(float)(sampleRateHz*4.0);
+                const float lowPole=std::exp(-2.0f*juce::MathConstants<float>::pi*125.0f/osRate);
+                const float fluxPole=std::exp(-2.0f*juce::MathConstants<float>::pi*28.0f/osRate);
+                const float hfPole=std::exp(-2.0f*juce::MathConstants<float>::pi*11500.0f/osRate);
+                outBass=lowPole*outBass+(1.0f-lowPole)*wet;
+                outFlux=fluxPole*outFlux+(1.0f-fluxPole)*outBass;
+                const float outputDrive=1.0f+1.8f*xfmr*(1.0f+0.3f*juce::jmin(2.0f,std::abs(outFlux)));
+                const float saturated=std::tanh(outputDrive*outBass)/outputDrive;
+                wet+=0.40f*xfmr*(saturated-outBass);
+                outTreble=hfPole*outTreble+(1.0f-hfPole)*wet;
+                wet-=0.035f*xfmr*juce::jmin(1.0f,std::abs(outFlux))*(wet-outTreble);
                 samples[j]=wet;
             }
         }
