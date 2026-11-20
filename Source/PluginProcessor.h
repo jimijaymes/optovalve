@@ -34,6 +34,10 @@ private:
     std::array<float,2> transformerFlux {0,0};
     std::array<float,2> transformerBass {0,0};
     std::array<float,2> transformerTreble {0,0};
+    // 1176 UTC input stage: magnetic core and amplifier state.
+    std::array<float,2> input1176CoreHigh {0,0};
+    std::array<float,2> input1176Flux {0,0};
+    std::array<float,2> fetOutputBias {0,0}, fetOutputHigh {0,0};
     std::array<float,2> outputCoreFlux {0,0}, outputCoreBass {0,0}, outputCoreTreble {0,0};
     std::array<float,2> tubeBiasMemory {0,0}, tubeCathodeMemory {0,0};
     std::array<float,2> vintageHighCutState {0,0};
