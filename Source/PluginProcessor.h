@@ -40,6 +40,7 @@ private:
     float vintageHighCutBlend=0.0f;
     // Frequency-sensitive optical detector with independent bass and presence envelopes.
     std::array<float,2> detectorBass {0,0};
+    std::array<float,2> sidechainEmphasisLow {0,0};
     float bassEnvelope=0.0f, presenceEnvelope=0.0f;
     float envelopeDb=0.0f, slowMemory=0.0f, smoothedGR=0.0f;
     float t4FastCell=0.0f, t4SlowCell=0.0f, t4Exposure=0.0f;
