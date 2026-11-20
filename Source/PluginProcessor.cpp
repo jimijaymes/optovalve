@@ -222,7 +222,7 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
             for(int j=0;j<upCount;++j)
             {
                 float wet=samples[j];
-                if(!fetOutput && tube>0.0001f)
+                if(tube>0.0001f)
                 {
                     // Valve gain-stage proxy: asymmetric grid conduction plus
                     // cathode self-bias recovery, calculated at 4x rate.
