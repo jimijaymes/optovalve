@@ -34,6 +34,7 @@ private:
     std::array<float,2> transformerFlux {0,0};
     std::array<float,2> transformerBass {0,0};
     std::array<float,2> transformerTreble {0,0};
+    std::array<float,2> tubeBiasMemory {0,0}, tubeCathodeMemory {0,0};
     std::array<float,2> vintageHighCutState {0,0};
     float vintageHighCutBlend=0.0f;
     // Frequency-sensitive optical detector with independent bass and presence envelopes.
