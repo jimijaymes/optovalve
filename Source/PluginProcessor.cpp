@@ -31,7 +31,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OptoValveProcessor::makeLayo
 OptoValveProcessor::OptoValveProcessor() : AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)), parameters(*this,nullptr,"STATE",makeLayout()) {}
 void OptoValveProcessor::prepareToPlay(double sr, int maximumExpectedSamplesPerBlock)
 {
-    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; t4FastCell=t4SlowCell=t4Exposure=t4GainReduction=responseBlend=0.0f; gainReductionDb.store(0);
+    sampleRateHz=sr; detector={}; transformerFlux={0,0}; transformerBass={0,0}; transformerTreble={0,0}; tubeBiasMemory={0,0}; tubeCathodeMemory={0,0}; vintageHighCutState={0,0}; vintageHighCutBlend=0.0f; detectorBass={0,0}; bassEnvelope=presenceEnvelope=0.0f; envelopeDb=slowMemory=smoothedGR=0; t4FastCell=t4SlowCell=t4Exposure=t4GainReduction=responseBlend=0.0f; gainReductionDb.store(0);
     preparedBlockSize = juce::jmax(1, maximumExpectedSamplesPerBlock);
     colourBuffer.setSize(2, preparedBlockSize);
     dryBuffer.setSize(2, preparedBlockSize);
@@ -212,12 +212,21 @@ void OptoValveProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
                 float wet=samples[j];
                 if(tube>0.0001f)
                 {
+                    // Valve gain-stage proxy: asymmetric grid conduction plus
+                    // cathode self-bias recovery, calculated at 4x rate.
                     const float drive=1.0f+1.5f*tube;
-                    const float bias=0.08f*tube;
-                    // Unity small-signal gain; soft saturation grows gradually with drive.
-                    const float nonlinear=(sat(wet*drive+bias)-sat(bias));
-                    const float smallSignal=1.0f-sat(bias)*sat(bias);
-                    wet=nonlinear/(drive*juce::jmax(0.15f,smallSignal));
+                    auto& biasState=tubeBiasMemory[(size_t)c];
+                    auto& cathode=tubeCathodeMemory[(size_t)c];
+                    const float cathodePole=std::exp(-2.0f*juce::MathConstants<float>::pi*35.0f/(float)(sampleRateHz*4.0));
+                    cathode=cathodePole*cathode+(1.0f-cathodePole)*std::abs(wet);
+                    const float biasPole=std::exp(-2.0f*juce::MathConstants<float>::pi*9.0f/(float)(sampleRateHz*4.0));
+                    biasState=biasPole*biasState+(1.0f-biasPole)*juce::jmax(0.0f,wet-0.4f);
+                    const float bias=0.08f*tube+0.13f*tube*cathode-0.10f*tube*biasState;
+                    const float z=wet*drive+bias;
+                    const float asymmetric=std::tanh(z)-0.035f*tube*std::tanh(z*z);
+                    const float baseline=std::tanh(bias)-0.035f*tube*std::tanh(bias*bias);
+                    const float smallSignal=1.0f-std::tanh(bias)*std::tanh(bias);
+                    wet=(asymmetric-baseline)/(drive*juce::jmax(0.15f,smallSignal));
                 }
                 samples[j]=wet;
             }
